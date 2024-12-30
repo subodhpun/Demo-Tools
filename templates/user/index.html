@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Professional Chat Interface</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen flex items-center justify-center p-4 font-[Inter]">
+    <h1 class="absolute top-0" id="notification">Connecting....</h1>
+    <div class="w-full max-w-md bg-white rounded-xl shadow-lg overflow-hidden border border-gray-100">
+        <!-- Chat Header -->
+        <div class="px-6 py-4 border-b border-gray-100">
+            <h1 class="text-lg font-semibold text-gray-800">Chat Messages</h1>
+            <p class="text-sm text-gray-500">Real-time conversation</p>
+        </div>
+
+        <!-- Chat Messages Container -->
+        <div id="chat-messages" class="p-4 h-[400px] overflow-y-auto bg-gray-50 space-y-4 relative">
+            <!-- Watermark -->
+            <div id="watermark"
+                class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-gray-400 opacity-50 text-4xl font-bold rotate-[-45deg] z-[-1] pointer-events-none">
+                Fast My Site
+            </div>
+            <!-- Encryption Message -->
+            <div
+                class="bg-[#faf4c2] bg-[url('https://www.transparenttextures.com/patterns/burlap.png')] bg-repeat text-gray-800 text-center font-semibold py-2 rounded-t-lg">
+                <span class="text-sm">Messages sent to this chat and calls are now secured with
+                    end-to-end encryption. Tap for more info</span>
+            </div>
+
+            <!-- Messages will be dynamically inserted here -->
+        </div>
+
+        <!-- Chat Input Area -->
+        <div id="chat-input" class="p-4 bg-white border-t border-gray-100">
+            <div class="flex items-center gap-3">
+                <input type="text" id="message-input"
+                    class="flex-1 px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Type your message..." />
+                <button id="send-button"
+                    class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors duration-200">
+                    Send
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        #chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        #chat-messages::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 3px;
+        }
+
+        #chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #999;
+        }
+    </style>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const userId = generateUserId();
+            const chatMessages = document.getElementById("chat-messages");
+            const messageInput = document.getElementById("message-input");
+            const sendButton = document.getElementById("send-button");
+
+            const socket = new WebSocket(`ws://localhost:8005/ws/chat/${userId}`);
+
+            socket.addEventListener("open", (event) => {
+                console.log("WebSocket connection established");
+
+                const notification = document.getElementById("notification");
+                notification.innerHTML = "Connected";
+                notification.classList.add("text-green-500");
+
+                //disappear after 2 sec
+                setTimeout(() => {
+                    notification.innerHTML = "";
+                }, 1000);
+            });
+
+            socket.addEventListener("message", (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === "admin_message") {
+                        appendMessage("Admin", data.message, "received");
+                    }
+                } catch (error) {
+                    console.error("Error parsing message:", error);
+                }
+            });
+
+            function sendMessage() {
+                const message = messageInput.value.trim();
+                if (message) {
+                    socket.send(message);
+                    appendMessage("You", message, "sent");
+                    messageInput.value = "";
+                }
+            }
+
+            function appendMessage(sender, message, type) {
+                const messageElement = document.createElement("div");
+                messageElement.className =
+                    type === "sent"
+                        ? "ml-auto bg-blue-600 text-white rounded-lg rounded-br-none p-3 max-w-[80%]"
+                        : "mr-auto bg-gray-200 text-gray-800 rounded-lg rounded-bl-none p-3 max-w-[80%]";
+                messageElement.innerHTML = `
+                    <div class="flex flex-col">
+                        <span class="text-xs ${type === "sent" ? "text-blue-100" : "text-gray-600"
+                    } mb-1">${sender}</span>
+                        <span class="break-words">${message}</span>
+                    </div>`;
+                chatMessages.appendChild(messageElement);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // Save message to localStorage
+                saveMessage(sender, message, type);
+            }
+
+            function saveMessage(sender, message, type) {
+                const chatMessagesData =
+                    JSON.parse(localStorage.getItem("chatMessages")) || [];
+                chatMessagesData.push({ sender, text: message, type });
+                localStorage.setItem("chatMessages", JSON.stringify(chatMessagesData));
+            }
+
+            // Function to load and display messages from localStorage
+            function loadMessages() {
+                const chatMessagesData =
+                    JSON.parse(localStorage.getItem("chatMessages")) || [];
+                chatMessagesData.forEach((msg) => {
+                    appendMessage(msg.sender, msg.text, msg.type);
+                });
+            }
+            // Load messages when the page is loaded
+            loadMessages();
+
+            sendButton.addEventListener("click", sendMessage);
+            messageInput.addEventListener("keypress", (e) => {
+                if (e.key === "Enter") {
+                    sendMessage();
+                }
+            });
+
+            function generateUserId() {
+                let userId = localStorage.getItem("chatUserId");
+                if (!userId) {
+                    userId = "user_" + Math.random().toString(36).substr(2, 9);
+                    localStorage.setItem("chatUserId", userId);
+                }
+                return userId;
+            }
+        });
+    </script>
+</body>
+
+</html>

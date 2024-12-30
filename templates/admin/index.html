@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Chat Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen font-[Inter]">
+    <div class="container mx-auto px-4 py-6 h-screen">
+        <!-- Header -->
+        <div class="mb-6">
+            <h1 class="text-2xl font-semibold text-gray-800">Admin Chat Dashboard</h1>
+            <p class="text-gray-600">Active Users</p>
+            <div id="connection-status" class="mt-2 text-sm"></div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="flex gap-6 h-[calc(100vh-8rem)]">
+            <!-- Users Grid -->
+            <div class="w-1/3 overflow-y-auto bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                <div id="users-grid" class="space-y-3">
+                    <!-- User cards will be added here -->
+                </div>
+            </div>
+
+            <!-- Chat Panel -->
+            <div class="w-2/3 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
+                <!-- Empty State -->
+                <div id="empty-state" class="h-full flex items-center justify-center text-gray-500">
+                    Select a user to start chatting
+                </div>
+
+                <!-- Chat Interface (hidden by default) -->
+                <div id="chat-interface" class="hidden h-full flex flex-col">
+                    <!-- Chat Header -->
+                    <div class="p-4 border-b border-gray-200 bg-gray-50">
+                        <h3 id="chat-user-id" class="font-medium text-gray-800"></h3>
+                    </div>
+
+                    <!-- Chat Messages -->
+                    <div id="chat-messages" class="flex-grow overflow-y-auto p-4 space-y-3"></div>
+
+                    <!-- Message Input -->
+                    <div class="p-4 border-t border-gray-200">
+                        <div class="flex gap-3">
+                            <input type="text" 
+                                id="message-input"
+                                class="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="Type your message...">
+                            <button id="send-button"
+                                class="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors duration-200">
+                                Send
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .message {
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            border-radius: 0.5rem;
+            word-break: break-word;
+            max-width: 80%;
+        }
+        .sent {
+            background-color: #EFF6FF;
+            border: 1px solid #DBEAFE;
+            margin-left: auto;
+        }
+        .received {
+            background-color: #F3F4F6;
+            border: 1px solid #E5E7EB;
+            margin-right: auto;
+        }
+        .system {
+            background-color: #FEF3C7;
+            border: 1px solid #FDE68A;
+            font-style: italic;
+            text-align: center;
+            max-width: 90%;
+            margin: 0 auto;
+        }
+        .user-card {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .user-card:hover {
+            transform: translateY(-1px);
+        }
+        .user-card.selected {
+            border-color: #3B82F6;
+            background-color: #EFF6FF;
+        }
+    </style>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const usersGrid = document.getElementById('users-grid');
+            const chatMessages = document.getElementById('chat-messages');
+            const messageInput = document.getElementById('message-input');
+            const sendButton = document.getElementById('send-button');
+            const chatInterface = document.getElementById('chat-interface');
+            const emptyState = document.getElementById('empty-state');
+            const chatUserId = document.getElementById('chat-user-id');
+            const connectionStatus = document.getElementById('connection-status');
+
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/admin`;
+            
+            let socket = null;
+            let reconnectTimeout = null;
+            let selectedUserId = null;
+            const RECONNECT_DELAY = 3000;
+            const activeUsers = new Map(); // Store user data: { element, messages, unread }
+
+            function createUserCard(userId) {
+                const card = document.createElement('div');
+                card.className = 'user-card p-4 rounded-lg border border-gray-200 bg-white relative';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <span class="font-medium text-gray-800">User ${userId}</span>
+                        <span class="unread-badge hidden px-2 py-0.5 text-xs font-medium bg-red-500 text-white rounded-full">0</span>
+                    </div>
+                `;
+
+                card.addEventListener('click', () => selectUser(userId));
+                return card;
+            }
+
+            function selectUser(userId) {
+                // Update selected state
+                document.querySelectorAll('.user-card').forEach(card => card.classList.remove('selected'));
+                activeUsers.get(userId).element.classList.add('selected');
+                
+                // Clear unread messages
+                const badge = activeUsers.get(userId).element.querySelector('.unread-badge');
+                badge.classList.add('hidden');
+                badge.textContent = '0';
+                activeUsers.get(userId).unread = 0;
+
+                // Show chat interface
+                selectedUserId = userId;
+                chatUserId.textContent = `Chat with User ${userId}`;
+                emptyState.classList.add('hidden');
+                chatInterface.classList.remove('hidden');
+
+                // Display messages
+                chatMessages.innerHTML = '';
+                activeUsers.get(userId).messages.forEach(msg => {
+                    appendMessage(msg.sender, msg.text, msg.type);
+                });
+            }
+
+            function appendMessage(sender, message, type) {
+                const messageElement = document.createElement('div');
+                messageElement.classList.add('message', type);
+                messageElement.innerHTML = `<strong>${sender}:</strong> ${message}`;
+                chatMessages.appendChild(messageElement);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            function updateUnreadCount(userId) {
+                if (userId !== selectedUserId) {
+                    const userData = activeUsers.get(userId);
+                    userData.unread++;
+                    const badge = userData.element.querySelector('.unread-badge');
+                    badge.textContent = userData.unread;
+                    badge.classList.remove('hidden');
+                }
+            }
+
+            function connect() {
+                if (reconnectTimeout) clearTimeout(reconnectTimeout);
+                if (socket) socket.close();
+
+                try {
+                    socket = new WebSocket(wsUrl);
+
+                    socket.addEventListener('open', (event) => {
+                        connectionStatus.textContent = 'Connected';
+                        connectionStatus.className = 'text-sm mt-2 text-green-600';
+                    });
+
+                    socket.addEventListener('message', handleMessage);
+
+                    socket.addEventListener('close', (event) => {
+                        connectionStatus.textContent = 'Disconnected - Attempting to reconnect...';
+                        connectionStatus.className = 'text-sm mt-2 text-red-600';
+                        reconnectTimeout = setTimeout(connect, RECONNECT_DELAY);
+                    });
+
+                    socket.addEventListener('error', (error) => {
+                        connectionStatus.textContent = 'Connection Error';
+                        connectionStatus.className = 'text-sm mt-2 text-red-600';
+                    });
+
+                } catch (error) {
+                    connectionStatus.textContent = 'Connection Failed';
+                    connectionStatus.className = 'text-sm mt-2 text-red-600';
+                    reconnectTimeout = setTimeout(connect, RECONNECT_DELAY);
+                }
+            }
+
+            function handleMessage(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    switch (data.type) {
+                        case 'user_connected':
+                            if (!activeUsers.has(data.user_id)) {
+                                const card = createUserCard(data.user_id);
+                                usersGrid.appendChild(card);
+                                activeUsers.set(data.user_id, {
+                                    element: card,
+                                    messages: [],
+                                    unread: 0
+                                });
+                            }
+                            break;
+
+                        case 'user_disconnected':
+                            if (activeUsers.has(data.user_id)) {
+                                const userData = activeUsers.get(data.user_id);
+                                userData.messages.push({
+                                    sender: 'System',
+                                    text: 'User disconnected',
+                                    type: 'system'
+                                });
+                                if (data.user_id === selectedUserId) {
+                                    appendMessage('System', 'User disconnected', 'system');
+                                }
+                            }
+                            break;
+
+                        case 'user_message':
+                            if (!activeUsers.has(data.user_id)) {
+                                const card = createUserCard(data.user_id);
+                                usersGrid.appendChild(card);
+                                activeUsers.set(data.user_id, {
+                                    element: card,
+                                    messages: [],
+                                    unread: 0
+                                });
+                            }
+                            
+                            const userData = activeUsers.get(data.user_id);
+                            userData.messages.push({
+                                sender: `User (${data.user_id})`,
+                                text: data.message,
+                                type: 'received'
+                            });
+
+                            if (data.user_id === selectedUserId) {
+                                appendMessage(`User (${data.user_id})`, data.message, 'received');
+                            } else {
+                                updateUnreadCount(data.user_id);
+                            }
+                            break;
+                    }
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            }
+
+            function sendMessage() {
+                const message = messageInput.value.trim();
+                if (message && selectedUserId && socket) {
+                    const messageData = JSON.stringify({
+                        type: 'admin_message',
+                        user_id: selectedUserId,
+                        message: message
+                    });
+                    
+                    try {
+                        socket.send(messageData);
+                        appendMessage('You', message, 'sent');
+                        activeUsers.get(selectedUserId).messages.push({
+                            sender: 'You',
+                            text: message,
+                            type: 'sent'
+                        });
+                        messageInput.value = '';
+                    } catch (error) {
+                        console.error('Error sending message:', error);
+                        appendMessage('System', 'Failed to send message', 'system');
+                    }
+                }
+            }
+
+            // Event Listeners
+            sendButton.addEventListener('click', sendMessage);
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+
+            // Initial connection
+            connect();
+        });
+    </script>
+</body>
+</html>
